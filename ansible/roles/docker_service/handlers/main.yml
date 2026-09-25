@@ -1,0 +1,8 @@
+---
+- name: Recreate Caddy after Caddyfile change
+  community.docker.docker_compose_v2:
+    project_src: /opt/caddy
+    services:
+      - caddy
+    state: present
+    recreate: always

@@ -1,0 +1,8 @@
+---
+- name: Ensure {{ record_type }} record for each configured service
+  ansible.builtin.include_tasks: manage_record.yml
+  loop: "{{ active_services + (additional_dns_services | default([])) }}"
+  loop_control:
+    loop_var: dns_service
+    label: "{{ dns_service.name }}"
+  when: lookup('vars', dns_service.name + '_domain', default='') != ''

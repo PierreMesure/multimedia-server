@@ -1,0 +1,196 @@
+---
+- name: Validate storage connection settings
+  ansible.builtin.assert:
+    that:
+      - storage_box_port | default('') | string | length > 0
+      - storage_box_host_key | default('') | length > 0
+    fail_msg: Set the storage SSH port and pinned host key in ansible/vars.yml.
+  no_log: true
+
+- name: Install rclone dependencies
+  apt:
+    name:
+      - rclone
+      - fuse3
+      - unzip
+    state: present
+
+- name: Ensure rclone release directory exists
+  ansible.builtin.file:
+    path: /opt/rclone
+    state: directory
+    mode: '0755'
+
+- name: Download pinned rclone v1.75.1 release
+  ansible.builtin.get_url:
+    url: https://downloads.rclone.org/v1.75.1/rclone-v1.75.1-linux-amd64.zip
+    dest: /opt/rclone/rclone-v1.75.1-linux-amd64.zip
+    checksum: sha256:982b5aa772841168f8e380f139e9e787b2a105403e32b94da8676a0e1c0a13ab
+    mode: '0644'
+
+- name: Extract pinned rclone release
+  ansible.builtin.unarchive:
+    src: /opt/rclone/rclone-v1.75.1-linux-amd64.zip
+    dest: /opt/rclone
+    remote_src: true
+    creates: /opt/rclone/rclone-v1.75.1-linux-amd64/rclone
+
+- name: Install pinned rclone binary
+  ansible.builtin.copy:
+    src: /opt/rclone/rclone-v1.75.1-linux-amd64/rclone
+    dest: /usr/local/bin/rclone
+    remote_src: true
+    mode: '0755'
+  notify: Restart storage-box service
+
+- name: Enable user_allow_other in /etc/fuse.conf
+  ansible.builtin.lineinfile:
+    path: /etc/fuse.conf
+    regexp: '^#?\s*user_allow_other'
+    line: 'user_allow_other'
+    state: present
+
+- name: Ensure mount point directory exists
+  ansible.builtin.file:
+    path: "{{ storage_box_mount_dir | default('/mnt/storage-box/music') }}"
+    state: directory
+
+- name: Pin Storage Box SSH host key
+  ansible.builtin.copy:
+    content: "[{{ storage_box_host }}]:{{ storage_box_port }} {{ storage_box_host_key }}\n"
+    dest: /etc/rclone-storagebox-known_hosts
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart storage-box service
+
+- name: Check existing rclone credentials
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/rclone-storagebox.conf
+    - /etc/rclone-storagebox-password.sha256
+  register: rclone_credential_files
+
+- name: Read existing rclone credentials
+  ansible.builtin.slurp:
+    src: "{{ item.item }}"
+  loop: "{{ rclone_credential_files.results }}"
+  when: item.stat.exists
+  register: existing_rclone_credentials
+  no_log: true
+
+- name: Determine whether the obscured password can be reused
+  ansible.builtin.set_fact:
+    rclone_existing_config: "{{ existing_rclone_credentials.results[0].content | default('') | b64decode }}"
+    rclone_stored_password_hash: "{{ existing_rclone_credentials.results[1].content | default('') | b64decode | trim }}"
+  no_log: true
+
+- name: Check whether the storage box password changed
+  ansible.builtin.set_fact:
+    rclone_password_needs_obscure: >-
+      {{ rclone_stored_password_hash != (storage_box_password | hash('sha256'))
+         or (rclone_existing_config | regex_findall('(?m)^pass = (.+)$') | length) != 1 }}
+  no_log: true
+
+- name: Obscure changed storage box password for rclone
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/rclone
+      - obscure
+      - '-'
+    stdin: "{{ storage_box_password }}"
+  register: rclone_new_obscured_pw
+  when: rclone_password_needs_obscure
+  changed_when: false
+  no_log: true
+
+- name: Select obscured storage box password
+  ansible.builtin.set_fact:
+    rclone_obscured_password: >-
+      {{ rclone_new_obscured_pw.stdout | default('') if rclone_password_needs_obscure
+         else (rclone_existing_config | regex_findall('(?m)^pass = (.+)$') | first) }}
+  no_log: true
+
+- name: Deploy rclone configuration for storage box
+  ansible.builtin.copy:
+    content: |
+      [storagebox]
+      type = sftp
+      host = {{ storage_box_host }}
+      port = {{ storage_box_port }}
+      user = {{ storage_box_username }}
+      pass = {{ rclone_obscured_password }}
+      known_hosts_file = /etc/rclone-storagebox-known_hosts
+      host_key_algorithms = ssh-ed25519
+      shell_type = unix
+      md5sum_command = md5sum
+      sha1sum_command = sha1sum
+    dest: /etc/rclone-storagebox.conf
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+  notify: Restart storage-box service
+
+- name: Record storage box password marker for idempotent deployments
+  ansible.builtin.copy:
+    content: "{{ storage_box_password | hash('sha256') }}\n"
+    dest: /etc/rclone-storagebox-password.sha256
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Ensure remote music directory exists on storage box
+  ansible.builtin.command:
+    cmd: "/usr/local/bin/rclone --config /etc/rclone-storagebox.conf mkdir storagebox:{{ storage_box_remote_dir | default('/home/' + storage_box_username + '/music') }}"
+  register: rclone_mkdir_result
+  changed_when: false
+  failed_when: rclone_mkdir_result.rc != 0
+
+- name: Deploy systemd service for storage box mount
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Rclone mount for Hostbrr Storage Box
+      Documentation=man:rclone(1)
+      After=network-online.target
+      Wants=network-online.target
+      AssertPathIsDirectory={{ storage_box_mount_dir | default('/mnt/storage-box/music') }}
+
+      [Service]
+      Type=notify
+      CacheDirectory=rclone-music
+      ExecStart=/usr/local/bin/rclone mount storagebox:{{ storage_box_remote_dir | default('/home/' + storage_box_username + '/music') }} {{ storage_box_mount_dir | default('/mnt/storage-box/music') }} \
+        --config /etc/rclone-storagebox.conf \
+        --allow-other \
+        --read-only \
+        --cache-dir /var/cache/rclone-music \
+        --vfs-cache-mode full \
+        --vfs-cache-max-size 10G \
+        --vfs-read-chunk-size 16M \
+        --dir-cache-time 5m \
+        --umask 000 \
+        --log-level INFO
+      ExecStop=/bin/fusermount3 -u -z {{ storage_box_mount_dir | default('/mnt/storage-box/music') }}
+      Restart=on-failure
+      RestartSec=5s
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: /etc/systemd/system/storage-box.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart storage-box service
+
+- name: Flush handlers to ensure service is restarted if config changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure storage-box service is enabled and started
+  ansible.builtin.systemd:
+    name: storage-box
+    enabled: yes
+    state: started
+    daemon_reload: yes

@@ -1,0 +1,13 @@
+---
+- name: Restart storage-box service
+  ansible.builtin.systemd:
+    name: storage-box
+    state: restarted
+    daemon_reload: yes
+  notify: Recreate Navidrome after storage change
+
+- name: Recreate Navidrome after storage change
+  community.docker.docker_compose_v2:
+    project_src: /opt/navidrome
+    state: present
+    recreate: always

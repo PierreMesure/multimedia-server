@@ -1,0 +1,49 @@
+---
+- name: Provision the multimedia server
+  hosts: multimedia_server
+  become: yes
+  vars_files:
+    - vars.yml
+  vars:
+    docker_users: ["root"]
+
+    # List of services to deploy
+    music_dir: "{{ storage_box_mount_dir | default('/mnt/storage-box/music') if (storage_box_host is defined and storage_box_host | length > 0) else '/opt/navidrome/music' }}"
+
+    active_services:
+      - name: navidrome
+      - name: caddy
+
+    # Additional DNS names for services that expose more than one public endpoint (if any)
+    additional_dns_services: []
+
+  tasks:
+    - name: Run common configuration
+      include_role:
+        name: common
+
+    - name: Mount Storage Box
+      include_role:
+        name: storage
+      when:
+        - storage_box_host is defined
+        - storage_box_host | length > 0
+        - storage_box_username is defined
+        - storage_box_username | length > 0
+        - storage_box_password is defined
+        - storage_box_password | length > 0
+
+    - name: Run docker installation
+      include_role:
+        name: docker
+
+    - name: Configure DNS records
+      include_role:
+        name: dns
+
+    - name: Deploy active services
+      include_role:
+        name: docker_service
+      with_items: "{{ active_services }}"
+      loop_control:
+        loop_var: item

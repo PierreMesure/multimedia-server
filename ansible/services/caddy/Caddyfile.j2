@@ -1,0 +1,7 @@
+# Caddy configuration
+
+{% if navidrome_domain is defined and navidrome_domain | length > 0 %}
+{{ navidrome_domain }} {
+    reverse_proxy navidrome:4533
+}
+{% endif %}

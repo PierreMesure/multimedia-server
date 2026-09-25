@@ -1,0 +1,46 @@
+---
+- name: Validate Infomaniak DNS configuration
+  ansible.builtin.assert:
+    that:
+      - dns_zone is defined
+      - dns_zone | length > 0
+      - infomaniak_api_token is defined
+      - infomaniak_api_token | length > 0
+    fail_msg: >-
+      Set dns_zone and infomaniak_api_token in ansible/vars.yml. The token
+      requires the dns:read and dns:write scopes for the DNS zone.
+  no_log: true
+  run_once: true
+  when: dns_zone | default('') | length > 0
+
+- name: Fetch existing DNS records from Infomaniak
+  ansible.builtin.uri:
+    url: "{{ infomaniak_api_url | default('https://api.infomaniak.com') }}/2/zones/{{ dns_zone }}/records"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ infomaniak_api_token }}"
+      Accept: application/json
+    return_content: true
+    status_code: 200
+  register: infomaniak_records_response
+  delegate_to: localhost
+  become: false
+  no_log: true
+  run_once: true
+  when: dns_zone | default('') | length > 0
+
+- name: Ensure A records match the server IPv4 address
+  ansible.builtin.include_tasks: ensure_record.yml
+  vars:
+    record_type: A
+    target_value: "{{ ansible_host }}"
+  when: dns_zone | default('') | length > 0
+
+- name: Ensure AAAA records match the server IPv6 address
+  ansible.builtin.include_tasks: ensure_record.yml
+  vars:
+    record_type: AAAA
+    target_value: "{{ server_ipv6 }}"
+  when:
+    - dns_zone | default('') | length > 0
+    - server_ipv6 | default('') | length > 0

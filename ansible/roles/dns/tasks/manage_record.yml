@@ -1,0 +1,54 @@
+---
+- name: Define {{ record_type }} record details for {{ dns_service.name }}
+  ansible.builtin.set_fact:
+    dns_record_source: "{{ lookup('vars', dns_service.name + '_domain') | regex_replace('\\.' ~ (dns_zone | regex_escape) ~ '$', '') }}"
+
+- name: Find existing {{ record_type }} records for {{ dns_service.name }}
+  ansible.builtin.set_fact:
+    dns_matching_records: >-
+      {{ infomaniak_records_response.json.data
+         | selectattr('type', 'equalto', record_type)
+         | selectattr('source', 'equalto', dns_record_source)
+         | list }}
+
+- name: Create missing {{ record_type }} record for {{ dns_service.name }}
+  ansible.builtin.uri:
+    url: "{{ infomaniak_api_url | default('https://api.infomaniak.com') }}/2/zones/{{ dns_zone }}/records"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ infomaniak_api_token }}"
+      Accept: application/json
+      Content-Type: application/json
+    body_format: json
+    body:
+      source: "{{ dns_record_source }}"
+      target: "{{ target_value }}"
+      type: "{{ record_type }}"
+      ttl: 300
+    status_code: [200, 201]
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: dns_matching_records | length == 0
+
+- name: Update {{ record_type }} record for {{ dns_service.name }} when its target changed
+  ansible.builtin.uri:
+    url: "{{ infomaniak_api_url | default('https://api.infomaniak.com') }}/2/zones/{{ dns_zone }}/records/{{ dns_record.id }}"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ infomaniak_api_token }}"
+      Accept: application/json
+      Content-Type: application/json
+    body_format: json
+    body:
+      target: "{{ target_value }}"
+      ttl: 300
+    status_code: 200
+  delegate_to: localhost
+  become: false
+  no_log: true
+  loop: "{{ dns_matching_records }}"
+  loop_control:
+    loop_var: dns_record
+    label: "{{ dns_service.name }}"
+  when: dns_record.target != target_value

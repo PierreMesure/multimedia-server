@@ -1,0 +1,144 @@
+name: Deploy multimedia server
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - ansible/**
+      - deploy.sh
+      - .github/workflows/deploy.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: multimedia-production
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.14"
+  UV_VERSION: "0.12.5"
+  ANSIBLE_CORE_VERSION: "2.20.8"
+
+jobs:
+  preflight:
+    name: Validate Ansible
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: ansible/requirements.yml
+
+      - name: Install pinned Ansible tooling
+        run: |
+          uv python install "$PYTHON_VERSION"
+          uv venv --python "$PYTHON_VERSION" "$RUNNER_TEMP/ansible-venv"
+          uv pip install --python "$RUNNER_TEMP/ansible-venv/bin/python" \
+            "ansible-core==${ANSIBLE_CORE_VERSION}" \
+            "requests==2.32.4" \
+            "python-dateutil==2.9.0.post0"
+          export PATH="$RUNNER_TEMP/ansible-venv/bin:$PATH"
+          echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"
+          ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Check playbook syntax
+        working-directory: ansible
+        run: |
+          cp vars.yml.example vars.yml
+          ansible-playbook --syntax-check site.yml
+
+  deploy:
+    name: Deploy to production
+    needs: preflight
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: ansible/requirements.yml
+
+      - name: Install pinned Ansible tooling
+        run: |
+          uv python install "$PYTHON_VERSION"
+          uv venv --python "$PYTHON_VERSION" "$RUNNER_TEMP/ansible-venv"
+          uv pip install --python "$RUNNER_TEMP/ansible-venv/bin/python" \
+            "ansible-core==${ANSIBLE_CORE_VERSION}" \
+            "requests==2.32.4" \
+            "python-dateutil==2.9.0.post0"
+          export PATH="$RUNNER_TEMP/ansible-venv/bin:$PATH"
+          echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"
+          ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Configure deployment credentials
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          INFOMANIAK_API_TOKEN: ${{ secrets.INFOMANIAK_API_TOKEN }}
+          DNS_ZONE: ${{ vars.DNS_ZONE }}
+          NAVIDROME_DOMAIN: ${{ vars.NAVIDROME_DOMAIN }}
+          SERVER_IP: ${{ vars.SERVER_IP }}
+          SERVER_IPV6: ${{ vars.SERVER_IPV6 }}
+          STORAGE_BOX_HOST: ${{ vars.STORAGE_BOX_HOST }}
+          STORAGE_BOX_PORT: ${{ vars.STORAGE_BOX_PORT }}
+          STORAGE_BOX_USERNAME: ${{ vars.STORAGE_BOX_USERNAME }}
+          STORAGE_BOX_PASSWORD: ${{ secrets.STORAGE_BOX_PASSWORD }}
+          STORAGE_BOX_HOST_KEY: ${{ secrets.STORAGE_BOX_HOST_KEY }}
+        run: |
+          test -n "$SSH_PRIVATE_KEY"
+          export PATH="$RUNNER_TEMP/ansible-venv/bin:$PATH"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          required = {
+              "infomaniak_api_token": "INFOMANIAK_API_TOKEN",
+              "dns_zone": "DNS_ZONE",
+              "navidrome_domain": "NAVIDROME_DOMAIN",
+              "server_ip": "SERVER_IP",
+              "storage_box_host": "STORAGE_BOX_HOST",
+              "storage_box_port": "STORAGE_BOX_PORT",
+              "storage_box_username": "STORAGE_BOX_USERNAME",
+              "storage_box_password": "STORAGE_BOX_PASSWORD",
+              "storage_box_host_key": "STORAGE_BOX_HOST_KEY",
+          }
+          optional = {"server_ipv6": "SERVER_IPV6"}
+          missing = [env_var for env_var in required.values() if not os.getenv(env_var)]
+          if missing:
+              raise SystemExit("Missing GitHub Environment values: " + ", ".join(missing))
+          values = {target: os.environ[env_var] for target, env_var in required.items()}
+          values.update({target: os.environ[env_var] for target, env_var in optional.items() if os.getenv(env_var)})
+
+          Path("ansible/vars.yml").write_text(json.dumps(values, indent=2) + "\n")
+          PY
+          umask 077
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          eval "$(ssh-agent -s)"
+          ssh-add "$HOME/.ssh/id_ed25519"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+
+      - name: Run Ansible deployment
+        run: PATH="$RUNNER_TEMP/ansible-venv/bin:$PATH" ./deploy.sh
+
+      - name: Remove deployment credentials
+        if: always()
+        run: |
+          rm -f ansible/vars.yml "$HOME/.ssh/id_ed25519"

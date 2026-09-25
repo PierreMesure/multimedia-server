@@ -1,0 +1,7 @@
+all:
+  children:
+    multimedia_server:
+      hosts:
+        target_server:
+          ansible_host: "{{ server_ip }}"
+          ansible_user: root

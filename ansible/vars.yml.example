@@ -1,0 +1,17 @@
+# Copy to vars.yml and fill in your installation-specific values.
+# Keep vars.yml out of version control.
+server_ip: ""
+server_ipv6: ""
+
+storage_box_host: ""
+storage_box_port: ""
+storage_box_username: ""
+storage_box_password: ""
+storage_box_host_key: ""
+# storage_box_remote_dir: ""
+# storage_box_mount_dir: ""
+
+navidrome_domain: ""
+
+dns_zone: ""
+infomaniak_api_token: ""

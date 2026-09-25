@@ -90,13 +90,13 @@ jobs:
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           INFOMANIAK_API_TOKEN: ${{ secrets.INFOMANIAK_API_TOKEN }}
-          DNS_ZONE: ${{ vars.DNS_ZONE }}
-          NAVIDROME_DOMAIN: ${{ vars.NAVIDROME_DOMAIN }}
-          SERVER_IP: ${{ vars.SERVER_IP }}
-          SERVER_IPV6: ${{ vars.SERVER_IPV6 }}
-          STORAGE_BOX_HOST: ${{ vars.STORAGE_BOX_HOST }}
-          STORAGE_BOX_PORT: ${{ vars.STORAGE_BOX_PORT }}
-          STORAGE_BOX_USERNAME: ${{ vars.STORAGE_BOX_USERNAME }}
+          DNS_ZONE: ${{ secrets.DNS_ZONE }}
+          NAVIDROME_DOMAIN: ${{ secrets.NAVIDROME_DOMAIN }}
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SERVER_IPV6: ${{ secrets.SERVER_IPV6 }}
+          STORAGE_BOX_HOST: ${{ secrets.STORAGE_BOX_HOST }}
+          STORAGE_BOX_PORT: ${{ secrets.STORAGE_BOX_PORT }}
+          STORAGE_BOX_USERNAME: ${{ secrets.STORAGE_BOX_USERNAME }}
           STORAGE_BOX_PASSWORD: ${{ secrets.STORAGE_BOX_PASSWORD }}
           STORAGE_BOX_HOST_KEY: ${{ secrets.STORAGE_BOX_HOST_KEY }}
         run: |

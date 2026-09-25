@@ -45,12 +45,12 @@ The workflow validates Ansible syntax and deploys on changes to deployment files
 | Secret | `INFOMANIAK_API_TOKEN` | DNS API access |
 | Secret | `STORAGE_BOX_PASSWORD` | Storage account password |
 | Secret | `STORAGE_BOX_HOST_KEY` | Pinned storage SSH host key |
-| Variable | `SERVER_IP` | Server address |
-| Variable | `SERVER_IPV6` | Optional IPv6 DNS target |
-| Variable | `DNS_ZONE` | DNS zone |
-| Variable | `NAVIDROME_DOMAIN` | Service domain |
-| Variable | `STORAGE_BOX_HOST` | Storage endpoint |
-| Variable | `STORAGE_BOX_PORT` | Storage SSH port |
-| Variable | `STORAGE_BOX_USERNAME` | Storage account |
+| Secret | `SERVER_IP` | Server address |
+| Secret | `SERVER_IPV6` | Optional IPv6 DNS target |
+| Secret | `DNS_ZONE` | DNS zone |
+| Secret | `NAVIDROME_DOMAIN` | Service domain |
+| Secret | `STORAGE_BOX_HOST` | Storage endpoint |
+| Secret | `STORAGE_BOX_PORT` | Storage SSH port |
+| Secret | `STORAGE_BOX_USERNAME` | Storage account |
 
 The workflow creates `ansible/vars.yml` on the runner and removes it after deployment. These Environment values must be configured before a deployment; the repository contains no live defaults. The workflow also supports manual runs.
